@@ -7,6 +7,7 @@ retrieved citation.
 
 from __future__ import annotations
 
+import html
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -27,11 +28,11 @@ for _candidate in _CANDIDATES:
         sys.path.insert(0, str(_candidate))
 
 try:
+    from chrome import answer_card, ask_heading, inject, mark
     from app.assemble import assemble_answer, resolve_patient_id
-    from app.banner import BANNER, LEAD, OUTCOMES, POINT_RULES, TRACK_NOTE
-    from app.citations import format_citation
+    from app.banner import BANNER, POINT_RULES
     from app.constants import WORKED_PATIENT_ID
-    from app.models import Answer, AnswerStatus
+    from app.models import Answer
     from app.narrate import (
         DEFAULT_AI_COMPLETE_MODEL,
         NARRATION_SQL,
@@ -66,12 +67,15 @@ try:
         CARE_PLAN_QUESTION,
         CLAIM_QUESTION,
         CONDITION_QUESTION,
+        DISCHARGE_QUESTION,
         DOSE_QUESTION,
-        EXTRA_REFUSALS,
         FROZEN_QUESTIONS,
         LAB_QUESTION,
+        MEDICATION_LIST_QUESTION,
         MEMBER_SUMMARY_QUESTION,
+        OPENFDA_QUESTION,
         RISK_QUESTION,
+        TREATMENT_QUESTION,
     )
     from app.retrieve import retrieval_steps
     from app.rows import normalize_row
@@ -125,33 +129,19 @@ _CHART_TITLES = {
 
 def main() -> None:
     st.set_page_config(page_title="Patient 360", layout="wide")
-    st.title("Patient 360")
-    lead()
+    inject()
     session = open_session()
-    if session is None:
-        st.warning(
-            "No Snowpark session is active. Refusal questions still run. "
-            "Counts and cited answers wait for PATIENT_360.CORE."
-        )
-    risk_rows = population(session)
     patients = load_patients(session)
-    st.header("This member")
-    selected = patient_selector(patients)
-    if session is not None and selected is not None:
-        patient_id = str(selected["patient_id"])
-        profile(selected)
-        panels = load_chart(session, patient_id)
-        member_counts(panels)
-        join_line(panels.get("claim_on_encounter", []))
-        cited_answers(session, patient_id)
-        cohort_audit(risk_rows)
-        source_rows(panels)
-    elif session is not None:
-        st.warning("The patient query returned no rows.")
-        cited_answers(session, None)
+    view, _ignored = navigation(patients, session)
+    selected = member_bar(patients)
+    patient_id = None if selected is None else str(selected["patient_id"])
+    if view == "Chart":
+        chart_page(session, selected)
+    elif view == "Risk":
+        cohort_page(session)
     else:
-        show_answer(assemble_answer(DOSE_QUESTION))
-    question_box(session, None if selected is None else str(selected["patient_id"]))
+        ask_page(session, patient_id, selected)
+    data_notice()
 
 
 def open_session() -> object | None:
@@ -176,6 +166,81 @@ def load_patients(session: object | None) -> list[dict[str, str | None]]:
         return []
 
 
+def navigation(
+    patients: list[dict[str, str | None]],
+    session: object | None,
+) -> tuple[str, dict[str, str | None] | None]:
+    with st.sidebar:
+        mark(84)
+        st.markdown('<p class="p360-brand">PATIENT 360</p>', unsafe_allow_html=True)
+        st.caption("Synthetic chart. Not for care.")
+        view = st.radio("View", ("Ask", "Chart", "Risk"), label_visibility="collapsed")
+        if session is None:
+            st.warning("Warehouse session is not active. Refusals still run.")
+        elif not patients:
+            st.warning("The member list is empty.")
+    return view, None
+
+
+def member_bar(patients: list[dict[str, str | None]]) -> dict[str, str | None] | None:
+    with st.container(border=True):
+        choice, identity = st.columns([1.15, 1])
+        with choice:
+            selected = patient_selector(patients)
+        with identity:
+            if selected is None:
+                st.caption("Choose a member to cite one chart.")
+                return None
+            name = f"{selected.get('first_name') or ''} {selected.get('last_name') or ''}".strip()
+            place = ", ".join(part for part in (selected.get("city"), selected.get("state")) if part)
+            birth = selected.get("birthdate") or "birth date not recorded"
+            st.markdown(
+                f'<p class="p360-member">{html.escape(name or "Selected member")}</p>'
+                f'<p class="p360-member-meta">{html.escape(place or "Location not recorded")} · Born {html.escape(birth)}</p>',
+                unsafe_allow_html=True,
+            )
+    return selected
+
+
+def data_notice() -> None:
+    st.caption("Synthetic Synthea members. Not real patients. Not for care.")
+    with st.popover("Source and licenses"):
+        st.write(BANNER)
+
+
+def ask_page(
+    session: object | None,
+    patient_id: str | None,
+    selected: dict[str, str | None] | None,
+) -> None:
+    del selected
+    ask_heading()
+    question_box(session, patient_id)
+
+
+def chart_page(session: object | None, selected: dict[str, str | None] | None) -> None:
+    st.markdown('<h1 class="p360-title">Member chart</h1>', unsafe_allow_html=True)
+    if session is None or selected is None:
+        st.info("The chart opens when the warehouse returns a member.")
+        return
+    patient_id = str(selected["patient_id"])
+    profile(selected)
+    panels = load_chart(session, patient_id)
+    member_counts(panels)
+    join_line(panels.get("claim_on_encounter", []))
+    source_rows(panels)
+
+
+def cohort_page(session: object | None) -> None:
+    st.markdown('<h1 class="p360-title">Risk stratification</h1>', unsafe_allow_html=True)
+    st.caption(
+        "A cited point count from CORE.RISK_SCORE. "
+        "This page does not train a model and does not turn the count into a probability."
+    )
+    risk_rows = population(session)
+    cohort_audit(risk_rows)
+
+
 def patient_selector(patients: list[dict[str, str | None]]) -> dict[str, str | None] | None:
     if not patients:
         return None
@@ -185,23 +250,11 @@ def patient_selector(patients: list[dict[str, str | None]]) -> dict[str, str | N
         if patient.get("patient_id") == WORKED_PATIENT_ID:
             default_index = index
             break
-    choice = st.selectbox("Patient", labels, index=default_index)
+    choice = st.selectbox("Member", labels, index=default_index)
     return patients[labels.index(choice)]
 
 
-def lead() -> None:
-    st.info(LEAD)
-    columns = st.columns(3)
-    for column, (title, body) in zip(columns, OUTCOMES, strict=True):
-        column.markdown(f"**{title}**")
-        column.write(body)
-    with st.expander("Data notice and licenses"):
-        st.write(BANNER)
-    st.caption(TRACK_NOTE)
-
-
 def population(session: object | None) -> list[dict[str, str | None]]:
-    st.header("This sample")
     if session is None:
         st.caption("Population counts wait for a warehouse session.")
         return []
@@ -229,119 +282,42 @@ def population(session: object | None) -> list[dict[str, str | None]]:
 
 
 def cohort_audit(risk_rows: list[dict[str, str | None]]) -> None:
-    st.header("Retrospective risk-signal audit")
-    st.caption(
-        "Secondary evidence only: observed 2023 emergency/inpatient utilization by a frozen "
-        "pre-index point count. This is not a validated classifier, patient probability, "
-        "or care recommendation."
-    )
     if not risk_rows:
+        st.info("The risk count appears when CORE.RISK_SCORE returns rows.")
         return
-    answer = assemble_answer(RISK_QUESTION, risk_rows=risk_rows, warehouse_connected=True)
-    if answer.status is AnswerStatus.REFUSED:
-        show_answer(answer, risk_rows)
-        return
-    _show_risk_metrics(risk_rows[0])
-    scores, patients, event_rates, audit_rows = _risk_chart_series(risk_rows)
-    if scores:
-        _show_risk_charts(scores, patients, event_rates)
-        st.dataframe(audit_rows, use_container_width=True)
-    warnings = _risk_audit_warnings(risk_rows)
-    if warnings:
-        st.warning(" ".join(warnings))
-    with st.expander("How the four points are defined"):
-        st.write(POINT_RULES)
-    show_answer(answer, risk_rows)
-
-
-def _show_risk_metrics(first: dict[str, str | None]) -> None:
-    metrics = st.columns(4)
-    metrics[0].metric("Index", first.get("index_date") or "not returned")
-    metrics[1].metric("Horizon end", first.get("horizon_end") or "not returned")
-    metrics[2].metric(
-        "Cohort / events",
-        f"{_whole(first.get('cohort_n'))} / {_whole(first.get('event_n'))}",
-    )
-    base_rate = first.get("base_rate")
-    metrics[3].metric(
-        "Observed base rate",
-        f"{float(base_rate) * 100:.2f}%" if base_rate is not None else "not returned",
-    )
-
-
-def _risk_chart_series(
-    risk_rows: list[dict[str, str | None]],
-) -> tuple[list[str], list[int], list[float | None], list[dict[str, object]]]:
-    scores: list[str] = []
-    patients: list[int] = []
-    event_rates: list[float | None] = []
-    audit_rows: list[dict[str, object]] = []
-    for risk_row in risk_rows:
-        score = risk_row.get("score")
-        count = risk_row.get("patient_count")
-        if score is None or count is None:
-            continue
-        member_count = int(float(count))
-        rate = risk_row.get("event_rate")
-        rate_pct = float(rate) * 100 if rate is not None else None
-        scores.append(score)
-        patients.append(member_count)
-        event_rates.append(rate_pct)
-        audit_rows.append(
-            {
-                "Score": score,
-                "Members": member_count,
-                "Events": int(float(risk_row.get("bucket_event_count") or 0)),
-                "Observed event rate": f"{rate_pct:.2f}%" if rate_pct is not None else "No members",
-            }
-        )
-    return scores, patients, event_rates, audit_rows
-
-
-def _show_risk_charts(
-    scores: list[str], patients: list[int], event_rates: list[float | None]
-) -> None:
+    first = risk_rows[0]
+    summary = st.columns(4)
+    summary[0].metric("Cohort", _whole(first.get("cohort_n")))
+    summary[1].metric("Events", _whole(first.get("event_n")))
+    summary[2].metric("Base rate", _percent(first.get("base_rate")))
+    summary[3].metric("Score 2 or higher", _whole(first.get("ge2_patient_count")))
+    ranked = sorted(risk_rows, key=lambda row: int(float(row.get("score") or 0)))
+    columns = st.columns(len(ranked))
+    for column, row in zip(columns, ranked, strict=True):
+        column.metric(f"Score {row.get('score')}", f"{_whole(row.get('patient_count'))} members")
+        column.caption(_percent(row.get("event_rate")))
     try:
-        charts = st.columns(2)
-        with charts[0]:
-            st.caption("Members in each score bucket")
-            st.bar_chart({"score": scores, "Members": patients}, x="score", y="Members")
-        with charts[1]:
-            st.caption("Observed emergency/inpatient event rate (%)")
-            st.bar_chart(
-                {"score": scores, "Observed rate (%)": event_rates},
-                x="score",
-                y="Observed rate (%)",
-            )
+        st.bar_chart(
+            {
+                "Score": [str(row.get("score")) for row in ranked],
+                "Members": [int(float(row.get("patient_count") or 0)) for row in ranked],
+            },
+            x="Score",
+            y="Members",
+        )
     except Exception:
-        columns = st.columns(len(scores))
-        for column, score, count, rate in zip(columns, scores, patients, event_rates, strict=True):
-            delta = f"{rate:.2f}% observed" if rate is not None else "no observed rate"
-            column.metric(f"Score {score}", str(count), delta)
-
-
-def _risk_audit_warnings(risk_rows: list[dict[str, str | None]]) -> list[str]:
-    by_score = {row.get("score"): row for row in risk_rows}
-    warnings: list[str] = []
-    rate_1 = by_score.get("1", {}).get("event_rate")
-    rate_2 = by_score.get("2", {}).get("event_rate")
-    if rate_1 is not None and rate_2 is not None and float(rate_2) < float(rate_1):
-        warnings.append("Score 2 is below score 1, so the buckets are not monotonic.")
-    score_3_count = by_score.get("3", {}).get("patient_count")
-    if score_3_count is not None and 0 < int(float(score_3_count)) < 10:
-        warnings.append(f"Score 3 contains only {_whole(score_3_count)} members.")
-    score_4_count = by_score.get("4", {}).get("patient_count")
-    if score_4_count is not None and int(float(score_4_count)) == 0:
-        warnings.append("Score 4 is empty.")
-    return warnings
+        pass
+    window = f"{first.get('index_date') or 'index'} through {first.get('horizon_end') or 'horizon'}"
+    st.caption(f"Index window {window}. Four recorded points. Not a care recommendation.")
+    with st.expander("How the four points are counted"):
+        st.write(POINT_RULES)
+    show_answer(
+        assemble_answer(RISK_QUESTION, risk_rows=risk_rows, warehouse_connected=True),
+        risk_rows,
+    )
 
 
 def profile(patient: dict[str, str | None]) -> None:
-    st.caption(
-        "Name, gender, birth, death, city, and state. "
-        "Tax identifier, driver's license, and passport are not selected. "
-        "The patient id is the member key."
-    )
     columns = st.columns(4)
     fields = (
         ("Name", f"{patient.get('first_name') or ''} {patient.get('last_name') or ''}".strip()),
@@ -353,7 +329,7 @@ def profile(patient: dict[str, str | None]) -> None:
     )
     for index, (label, value) in enumerate(fields):
         columns[index % 4].metric(label, value or "blank")
-    st.caption(f"Patient id {patient.get('patient_id') or ''}")
+    st.caption("Identifiers such as tax, license, and passport numbers are not shown.")
 
 
 def load_chart(session: object, patient_id: str) -> dict[str, list[dict[str, str | None]]]:
@@ -406,31 +382,6 @@ def join_line(rows: list[dict[str, str | None]]) -> None:
     )
 
 
-def cited_answers(session: object | None, patient_id: str | None) -> None:
-    st.header("Clinical document copilot")
-    st.caption(
-        "Problem 04 permits clinical or regulatory documents. This implementation "
-        "chooses the clinical path and joins structured rows to C-CDA evidence."
-    )
-    examples = (
-        ("Member and encounters", MEMBER_SUMMARY_QUESTION),
-        ("Conditions", CONDITION_QUESTION),
-        ("Care plans", CARE_PLAN_QUESTION),
-        ("Latest labs", LAB_QUESTION),
-        ("Claims on encounters", CLAIM_QUESTION),
-        ("Medication cross-check", _SELECTED_ANTIHISTAMINE),
-        ("Allergy-code guard", ALLERGY_QUESTION),
-    )
-    for title, question in examples:
-        answer, rows, failure = run_question(session, question, patient_id)
-        st.subheader(title)
-        if failure is not None:
-            show_query_error(failure)
-        show_answer(answer, rows)
-    st.subheader("Refused on purpose")
-    show_answer(assemble_answer(DOSE_QUESTION))
-
-
 def source_rows(panels: dict[str, list[dict[str, str | None]]]) -> None:
     with st.expander("Source rows for this member"):
         st.caption(
@@ -445,16 +396,54 @@ def source_rows(panels: dict[str, list[dict[str, str | None]]]) -> None:
             show_table(rows)
 
 
+_PROMPT_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
+    (
+        "Chart",
+        (
+            ("Summary", MEMBER_SUMMARY_QUESTION),
+            ("Conditions", CONDITION_QUESTION),
+            ("Medications", MEDICATION_LIST_QUESTION),
+            ("Care plans", CARE_PLAN_QUESTION),
+            ("Labs", LAB_QUESTION),
+            ("Claims", CLAIM_QUESTION),
+        ),
+    ),
+    (
+        "Evidence check",
+        (
+            ("Antihistamine", _SELECTED_ANTIHISTAMINE),
+            ("Allergy guard", ALLERGY_QUESTION),
+        ),
+    ),
+    (
+        "Guardrails",
+        (
+            ("Dose change", DOSE_QUESTION),
+            ("Discharge note", DISCHARGE_QUESTION),
+            ("External label", OPENFDA_QUESTION),
+            ("Treatment advice", TREATMENT_QUESTION),
+        ),
+    ),
+)
+
+
 def question_box(session: object | None, selected_patient_id: str | None) -> None:
-    st.header("Cited question")
     if "question" not in st.session_state:
         st.session_state.question = FROZEN_QUESTIONS[0]
-    prompts = FROZEN_QUESTIONS + EXTRA_REFUSALS
-    columns = st.columns(2)
-    for index, prompt in enumerate(prompts):
-        if columns[index % 2].button(prompt, key=f"prompt_{index}"):
-            st.session_state.question = prompt
-    question = st.text_area("Question", key="question")
+    with st.container(border=True):
+        for title, prompts in _PROMPT_GROUPS:
+            st.caption(title)
+            for offset in range(0, len(prompts), 3):
+                row = prompts[offset : offset + 3]
+                columns = st.columns(len(row))
+                for column, (label, prompt) in zip(columns, row):
+                    if column.button(label, key=f"prompt_{label}", use_container_width=True):
+                        st.session_state.question = prompt
+                        st.session_state.ask_now = True
+        question = st.text_area("Question", key="question", height=110, label_visibility="collapsed")
+        ask_now = st.button("Ask", type="primary", use_container_width=True) or st.session_state.pop(
+            "ask_now", False
+        )
     narrate = st.checkbox(
         "Optional Cortex narration (AI_COMPLETE)",
         value=False,
@@ -463,7 +452,7 @@ def question_box(session: object | None, selected_patient_id: str | None) -> Non
     model = DEFAULT_AI_COMPLETE_MODEL
     if narrate:
         model = st.text_input("AI_COMPLETE model", value=DEFAULT_AI_COMPLETE_MODEL)
-    if not st.button("Ask", type="primary"):
+    if not ask_now:
         return
     answer, rows, failure = run_question(session, question, selected_patient_id)
     if failure is not None:
@@ -604,26 +593,16 @@ def fetch(session: object, spec: QuerySpec) -> list[dict[str, str | None]]:
 
 
 def show_answer(answer: Answer, rows: list[dict[str, object]] | None = None) -> None:
-    if answer.status is AnswerStatus.REFUSED:
-        st.error(answer.text)
-    else:
-        st.success(answer.text)
-        citation_chips(answer)
-        if answer.rejected_codes:
-            st.warning(
-                "Allergy guard: a retrieved code is not the allergies.csv code. "
-                f"Quoted code: {', '.join(answer.quoted_codes)}. "
-                f"Not quoted: {', '.join(answer.rejected_codes)}."
-            )
+    answer_card(answer)
+    if answer.rejected_codes:
+        st.warning(
+            "The chart code is quoted. A different code in the same document is not quoted. "
+            f"Quoted: {', '.join(answer.quoted_codes)}. "
+            f"Not quoted: {', '.join(answer.rejected_codes)}."
+        )
     if rows:
-        with st.expander("Rows behind this answer"):
+        with st.expander("Citation details"):
             show_table(rows)
-
-
-def citation_chips(answer: Answer) -> None:
-    chips = [format_citation(citation) for citation in answer.citations]
-    if chips:
-        st.caption(" · ".join(chips))
 
 
 def show_table(rows: list[dict[str, object]]) -> None:
@@ -639,6 +618,12 @@ def show_query_error(failure: QueryFailure) -> None:
         st.text(failure.detail)
 
 
+def _percent(value: str | None) -> str:
+    if not value:
+        return "not recorded"
+    return f"{float(value) * 100:.2f}%"
+
+
 def _whole(value: str | None) -> str:
     if not value:
         return "0"
@@ -651,7 +636,7 @@ def _whole(value: str | None) -> str:
 def _patient_label(patient: dict[str, str | None]) -> str:
     first = patient.get("first_name") or ""
     last = patient.get("last_name") or ""
-    return f"{last}, {first} | {patient.get('patient_id') or ''}"
+    return f"{last}, {first}".strip(", ")
 
 
 main()
