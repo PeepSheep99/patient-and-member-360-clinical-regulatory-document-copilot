@@ -63,6 +63,30 @@ _CSS = """
     line-height: 1.15;
     margin: 0 0 0.4rem;
   }
+  [data-testid="stTabs"] [data-baseweb="tab-list"] {
+    gap: 0.15rem;
+  }
+  [data-testid="stTabs"] button[data-baseweb="tab"] {
+    height: auto;
+    padding: 0.85rem 1.15rem;
+  }
+  [data-testid="stTabs"] button[data-baseweb="tab"] p {
+    font-size: 1.08rem;
+    font-weight: 650;
+    line-height: 1.2;
+  }
+  [data-testid="stTabs"] [data-baseweb="tab-highlight"] {
+    background-color: #0E7C73;
+    height: 3px;
+  }
+  [data-testid="stTabs"] [data-baseweb="tab-border"] {
+    background-color: #D5E4E1;
+  }
+  .p360-tabline {
+    color: #526864;
+    font-size: 0.98rem;
+    margin: 0.15rem 0 0.85rem;
+  }
   .p360-lead {
     color: #526864;
     font-size: 1.02rem;

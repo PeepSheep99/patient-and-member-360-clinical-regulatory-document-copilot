@@ -66,8 +66,21 @@ def render(selected: Row, record: Record) -> None:
         _coverage_claims,
         _devices_imaging,
     )
-    for tab, section in zip(tabs, sections, strict=True):
+    lines = (
+        "What is current: allergies, active problems and medications, latest vitals, and the last visits.",
+        "Every problem on the chart, active first, then resolved.",
+        "Every medication on the chart, active first, then stopped.",
+        "The latest reading of each test, with the one before it.",
+        "Every vaccine recorded for this member.",
+        "Every care plan, and whether it is still open.",
+        "Every procedure recorded for this member.",
+        "Every visit, with the facility and the clinician.",
+        "Every coverage span, then every claim joined to its visit.",
+        "Devices in use, and the imaging studies on the chart.",
+    )
+    for tab, section, line in zip(tabs, sections, lines, strict=True):
         with tab:
+            st.markdown(f'<p class="p360-tabline">{html.escape(line)}</p>', unsafe_allow_html=True)
             section(record)
 
 
