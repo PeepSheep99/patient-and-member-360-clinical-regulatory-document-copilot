@@ -6,11 +6,14 @@ entities:
       name: PATIENT_360_APP
       database: PATIENT_360
       schema: CORE
-    title: "Patient 360 (Synthea, not for care)"
+    title: "Patient 360"
     query_warehouse: PATIENT_360_WH
     main_file: streamlit/patient_360.py
     artifacts:
       - streamlit/patient_360.py
+      - streamlit/chrome.py
+      - streamlit/member_chart.py
+      - streamlit/assets/patient360-mark.jpg
       - streamlit/pyproject.toml
       - streamlit/.streamlit/config.toml
       - src: streamlit/environment.yml

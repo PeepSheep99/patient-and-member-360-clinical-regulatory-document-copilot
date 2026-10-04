@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Patient 360 demo video</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #1b2a28;
+      --muted: #526864;
+      --line: #d5e4e1;
+      --teal: #0e7c73;
+      --paper: #f4f7f6;
+      --card: #ffffff;
+      --warn: #7a4f0e;
+      --warn-bg: #fbf3e8;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font: 18px/1.5 Georgia, "Iowan Old Style", serif;
+    }
+    main { max-width: 42rem; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+    h1 { font-size: 2rem; line-height: 1.15; margin: 0 0 0.4rem; }
+    h2 { font-size: 1.35rem; margin: 2rem 0 0.6rem; }
+    p, li { margin: 0.4rem 0; }
+    .lead { color: var(--muted); font-size: 1.05rem; }
+    .clock {
+      display: inline-block;
+      background: #12312e;
+      color: white;
+      border-radius: 999px;
+      font: 700 0.85rem/1 ui-sans-serif, system-ui, sans-serif;
+      letter-spacing: 0.03em;
+      padding: 0.2rem 0.65rem;
+      vertical-align: middle;
+    }
+    ol.steps { padding-left: 1.3rem; }
+    ol.steps li { margin: 0.7rem 0; }
+    code, .say, .type {
+      font-family: ui-monospace, Consolas, monospace;
+      font-size: 0.92rem;
+    }
+    .type, .say {
+      display: block;
+      border-radius: 12px;
+      padding: 0.8rem 1rem;
+      margin: 0.45rem 0 0.2rem;
+    }
+    .type { background: #12312e; color: #e7f5f2; }
+    .say { background: #e7f5f2; border: 1px solid #b7ddd6; }
+    .label {
+      font: 700 0.75rem/1 ui-sans-serif, system-ui, sans-serif;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--teal);
+    }
+    .warn {
+      background: var(--warn-bg);
+      color: var(--warn);
+      border-radius: 12px;
+      padding: 0.8rem 1rem;
+      margin: 0.8rem 0;
+    }
+    table { width: 100%; border-collapse: collapse; margin: 0.6rem 0 1rem; font-size: 1rem; }
+    th, td { text-align: left; vertical-align: top; border-top: 1px solid var(--line); padding: 0.45rem 0.4rem; }
+    th { color: var(--teal); font: 700 0.78rem/1.3 ui-sans-serif, system-ui, sans-serif; letter-spacing: 0.04em; text-transform: uppercase; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>How to record the Patient 360 demo</h1>
+  <p class="lead">One take. About three and a half minutes. The terminal stays in the frame the whole time. You show one workflow and three capabilities. You do not show how the system was built.</p>
+
+  <h2>Before you press record</h2>
+  <ol class="steps">
+    <li>Close every window except the terminal. No browser, no editor, no second project.</li>
+    <li>Open the terminal in this folder:
+      <span class="label">Type</span>
+      <span class="type">cd C:\Users\C306242\Phoenix\sainathch45\patient-360-github</span>
+    </li>
+    <li>Start CoCo the same way you start it for this hackathon, from that folder. Do not paste the planning prompt or the testing prompt.</li>
+    <li>Make the text large. Hold Ctrl and roll the mouse wheel until a full SQL line is easy to read on a phone.</li>
+    <li>Put this page on your phone, or on a second screen that the camera cannot see.</li>
+    <li>Do a silent practice of beat 1 once. Then start the recording.</li>
+  </ol>
+  <div class="warn">If CoCo offers to edit a file, drop a table, create a table, or touch any database other than PATIENT_360, say “No” and do not approve it. The only approval in this video is a read.</div>
+
+  <h2>What the judge should see</h2>
+  <table>
+    <tr><th>Capability</th><th>You ask</th><th>What must be on screen</th></tr>
+    <tr><td>Cited retrieval</td><td>Where this member’s conditions are written</td><td>The chart row and the matching clinical-document cell</td></tr>
+    <tr><td>Guardrail</td><td>Change the dose</td><td>A refusal, and no citation, even though the medication exists</td></tr>
+    <tr><td>Point count</td><td>How the frozen 2023 cohort sorted</td><td>The rates the view returns. You say it is a count</td></tr>
+  </table>
+
+  <h2><span class="clock">0:00 to 1:00</span> Beat 1. Input</h2>
+  <p>You are already in the repo. Speak first, then type. Let the plan finish before you touch anything.</p>
+  <span class="label">Say</span>
+  <span class="say">I’m in the Patient 360 repo. I’ll ask where one member’s conditions are written, in the chart and in the clinical document.</span>
+  <span class="label">Type, in your own words, but keep the name and these four ideas: conditions, chart, clinical document, where they are written</span>
+  <span class="type">Where are Alexandra16 Mosciski958's conditions written, in the chart and in the clinical document?</span>
+  <ol class="steps">
+    <li>Stop typing. Do not approve yet.</li>
+    <li>Wait until the plan is on screen.</li>
+    <li>Read the plan out loud in one sentence: it should look up this member’s conditions and the matching document section.</li>
+    <li>If the plan is still running when the minute ends, let it finish. Do not ask a second question.</li>
+  </ol>
+
+  <h2><span class="clock">1:00 to 2:00</span> Beat 2. Processing</h2>
+  <ol class="steps">
+    <li>Approve only the read. Say “Yes” to the SELECT. Say “No” to anything else.</li>
+    <li>Leave the SQL on screen long enough to see the view names. You want <code>CONDITION</code> and the document section. The problems section code is <code>11450-4</code>.</li>
+    <li>Leave the result rows on screen. Do not clear the terminal.</li>
+    <li>Do not narrate every column. One sentence is enough.</li>
+  </ol>
+  <span class="label">Say</span>
+  <span class="say">It chose the condition view and the clinical-document section, and these are the rows it got back.</span>
+  <div class="warn">Refuse these if they appear: editing a file, dropping or creating a table, a write statement, or any database that is not PATIENT_360.</div>
+
+  <h2><span class="clock">2:00 to 3:30</span> Beat 3. Output</h2>
+  <p>Three shots, in this order. Do not rush the first one.</p>
+
+  <h3>Shot 1. The citation, about 40 seconds</h3>
+  <p>Scroll until one citation is fully on screen. Read these fields out loud. Do not read the whole UUID. Read the first and last four characters if it is long.</p>
+  <ul>
+    <li>From the chart: table, patient, encounter, code, start.</li>
+    <li>From the document, when a cell came back: document, section, element.</li>
+  </ul>
+  <span class="label">Say</span>
+  <span class="say">The answer cites the chart row and the document cell. Table, patient, encounter, code, and start. And the document cell: document, section, element.</span>
+
+  <h3>Shot 2. The refusal, about 25 seconds</h3>
+  <span class="label">Type this sentence exactly</span>
+  <span class="type">Change the fexofenadine dose.</span>
+  <p>Wait for the refusal. Point at the screen and show that there is no citation under it.</p>
+  <span class="label">Say</span>
+  <span class="say">The medication is on the chart. The dose change is still refused, and nothing is cited.</span>
+
+  <h3>Shot 3. The count, the last half minute</h3>
+  <p>Only if you still have about 30 seconds. If you are already at 3:30, stop after the refusal.</p>
+  <span class="label">Type</span>
+  <span class="type">How did the frozen 2023 point count sort the cohort?</span>
+  <p>Leave the rates on screen. Read the numbers you see. Do not replace them with a number you remember.</p>
+  <span class="label">Say, after the rates are visible</span>
+  <span class="say">This is a count, not a prediction. A higher score is not always a higher rate.</span>
+  <p>If the rate for score 2 is lower than the rate for score 1, point at those two lines while you say that.</p>
+
+  <h2>Stop</h2>
+  <ol class="steps">
+    <li>Stop talking. Stop the recording.</li>
+    <li>Watch it once with the sound off. You should still be able to read one citation and see the refusal.</li>
+    <li>If a password, a token, or another database appears, cut that take. Record again.</li>
+  </ol>
+
+  <h2>Do not spend the recording on these</h2>
+  <ul>
+    <li>Planning and testing. Those are how it was built. The judge needs the working path.</li>
+    <li>The unit tests.</li>
+    <li>A tour of the Streamlit pages. This video is the terminal.</li>
+    <li>A second member. Stay with Alexandra16 Mosciski958.</li>
+  </ul>
+</main>
+</body>
+</html>
