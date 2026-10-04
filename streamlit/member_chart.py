@@ -38,50 +38,82 @@ _CATEGORY_TITLES = {
 }
 
 
-def render(selected: Row, record: Record) -> None:
+def section_choices(record: Record) -> tuple[tuple[str, str], ...]:
+    counts = {
+        "problems": len(record.get("record_problems", [])),
+        "medications": len(record.get("record_medications", [])),
+        "immunizations": len(record.get("record_immunizations", [])),
+        "careplans": len(record.get("record_careplans", [])),
+        "procedures": len(record.get("record_procedures", [])),
+        "encounters": len(record.get("record_encounters", [])),
+        "coverage": len(record.get("record_claims", [])),
+        "devices": len(record.get("record_devices", [])) + len(record.get("record_imaging", [])),
+    }
+    choices: list[tuple[str, str]] = []
+    for key, title, _line, _draw in _SECTIONS:
+        count = counts.get(key)
+        label = title if count is None else f"{title}  ·  {count}"
+        choices.append((key, label))
+    return tuple(choices)
+
+
+def rail(selected: Row, record: Record) -> str:
+    """Member facts and the chart sections, in the sidebar. Returns the chosen section."""
+    _side_identity(selected, record)
+    st.markdown('<p class="p360-side-kicker">Chart</p>', unsafe_allow_html=True)
+    options = section_choices(record)
+    labels = {key: label for key, label in options}
+    choice = st.radio(
+        "Chart section",
+        [key for key, _label in options],
+        format_func=labels.get,
+        label_visibility="collapsed",
+        key="chart_section",
+    )
+    return choice
+
+
+def render(selected: Row, record: Record, section: str) -> None:
     _banner(selected, record)
-    tabs = st.tabs(
-        (
-            "Summary",
-            f"Problems ({len(record.get('record_problems', []))})",
-            f"Medications ({len(record.get('record_medications', []))})",
-            "Results",
-            f"Immunizations ({len(record.get('record_immunizations', []))})",
-            f"Care plans ({len(record.get('record_careplans', []))})",
-            f"Procedures ({len(record.get('record_procedures', []))})",
-            f"Encounters ({len(record.get('record_encounters', []))})",
-            "Coverage and claims",
-            "Devices and imaging",
+    chosen = next((item for item in _SECTIONS if item[0] == section), _SECTIONS[0])
+    st.markdown(f'<p class="p360-tabline">{html.escape(chosen[2])}</p>', unsafe_allow_html=True)
+    chosen[3](record)
+
+
+def _side_identity(selected: Row, record: Record) -> None:
+    name = f"{selected.get('first_name') or ''} {selected.get('last_name') or ''}".strip()
+    birth = selected.get("birthdate") or ""
+    death = selected.get("deathdate")
+    gender = {"F": "Female", "M": "Male"}.get(selected.get("gender") or "", selected.get("gender") or "")
+    age = _age(birth, death)
+    meta = " · ".join(
+        part
+        for part in (
+            gender,
+            f"{age} years" if age is not None else "",
+            ", ".join(p for p in (selected.get("city"), selected.get("state")) if p),
         )
+        if part
     )
-    sections: tuple[Callable[[Record], None], ...] = (
-        _summary,
-        _problems,
-        _medications,
-        _results,
-        _immunizations,
-        _careplans,
-        _procedures,
-        _encounters,
-        _coverage_claims,
-        _devices_imaging,
+    allergies = record.get("record_allergies", [])
+    if allergies:
+        names = ", ".join(_split_tag(row.get("description") or "")[0] for row in allergies[:3])
+        extra = len(allergies) - 3
+        if extra > 0:
+            names = f"{names}, and {extra} more"
+        allergy = f'<p class="p360-side-alert">Allergies · {html.escape(names)}</p>'
+    else:
+        allergy = '<p class="p360-side-meta">No allergy recorded</p>'
+    active_problems = sum(1 for row in record.get("record_problems", []) if not row.get("stop_date"))
+    active_meds = sum(1 for row in record.get("record_medications", []) if not row.get("stop_ts"))
+    st.markdown(
+        f'<p class="p360-side-name">{html.escape(name)}</p>'
+        f'<p class="p360-side-meta">{html.escape(meta)}</p>'
+        f"{allergy}"
+        f'<p class="p360-side-meta">{_count(active_problems, "active problem")}'
+        f" · {_count(active_meds, "active medication")}</p>",
+        unsafe_allow_html=True,
     )
-    lines = (
-        "What is current: allergies, active problems and medications, latest vitals, and the last visits.",
-        "Every problem on the chart, active first, then resolved.",
-        "Every medication on the chart, active first, then stopped.",
-        "The latest reading of each test, with the one before it.",
-        "Every vaccine recorded for this member.",
-        "Every care plan, and whether it is still open.",
-        "Every procedure recorded for this member.",
-        "Every visit, with the facility and the clinician.",
-        "Every coverage span, then every claim joined to its visit.",
-        "Devices in use, and the imaging studies on the chart.",
-    )
-    for tab, section, line in zip(tabs, sections, lines, strict=True):
-        with tab:
-            st.markdown(f'<p class="p360-tabline">{html.escape(line)}</p>', unsafe_allow_html=True)
-            section(record)
 
 
 def _banner(selected: Row, record: Record) -> None:
@@ -416,6 +448,20 @@ def _devices_imaging(record: Record) -> None:
             for r in record.get("record_imaging", [])
         ],
     )
+
+
+_SECTIONS: tuple[tuple[str, str, str, Callable[[Record], None]], ...] = (
+    ("summary", "Summary", "What is current: allergies, active problems and medications, latest vitals, and the last visits.", _summary),
+    ("problems", "Problems", "Every problem on the chart, active first, then resolved.", _problems),
+    ("medications", "Medications", "Every medication on the chart, active first, then stopped.", _medications),
+    ("results", "Results", "The latest reading of each test, with the one before it.", _results),
+    ("immunizations", "Immunizations", "Every vaccine recorded for this member.", _immunizations),
+    ("careplans", "Care plans", "Every care plan, and whether it is still open.", _careplans),
+    ("procedures", "Procedures", "Every procedure recorded for this member.", _procedures),
+    ("encounters", "Encounters", "Every visit, with the facility and the clinician.", _encounters),
+    ("coverage", "Coverage and claims", "Every coverage span, then every claim joined to its visit.", _coverage_claims),
+    ("devices", "Devices and imaging", "Devices in use, and the imaging studies on the chart.", _devices_imaging),
+)
 
 
 def _vitals_grid(record: Record) -> None:

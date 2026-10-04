@@ -120,11 +120,10 @@ def main() -> None:
     inject()
     session = open_session()
     patients = load_patients(session)
-    view, _ignored = navigation(patients, session)
-    selected = member_bar(patients)
+    view, selected, record, section = navigation(patients, session)
     patient_id = None if selected is None else str(selected["patient_id"])
     if view == "Chart":
-        chart_page(session, selected)
+        chart_page(session, selected, record, section)
     elif view == "Risk":
         cohort_page(session)
     else:
@@ -157,7 +156,7 @@ def load_patients(session: object | None) -> list[dict[str, str | None]]:
 def navigation(
     patients: list[dict[str, str | None]],
     session: object | None,
-) -> tuple[str, dict[str, str | None] | None]:
+) -> tuple[str, dict[str, str | None] | None, dict[str, list[dict[str, str | None]]] | None, str]:
     with st.sidebar:
         mark(84)
         st.markdown('<p class="p360-brand">PATIENT 360</p>', unsafe_allow_html=True)
@@ -167,27 +166,23 @@ def navigation(
             st.warning("Warehouse session is not active. Refusals still run.")
         elif not patients:
             st.warning("The member list is empty.")
-    return view, None
-
-
-def member_bar(patients: list[dict[str, str | None]]) -> dict[str, str | None] | None:
-    with st.container(border=True):
-        choice, identity = st.columns([1.15, 1])
-        with choice:
-            selected = patient_selector(patients)
-        with identity:
-            if selected is None:
-                st.caption("Choose a member to cite one chart.")
-                return None
+        selected = patient_selector(patients) if view != "Risk" else None
+        record = None
+        section = "summary"
+        if view == "Chart" and session is not None and selected is not None:
+            record = load_record(session, str(selected["patient_id"]))
+            section = member_chart.rail(selected, record)
+        elif selected is not None:
             name = f"{selected.get('first_name') or ''} {selected.get('last_name') or ''}".strip()
             place = ", ".join(part for part in (selected.get("city"), selected.get("state")) if part)
             birth = selected.get("birthdate") or "birth date not recorded"
             st.markdown(
-                f'<p class="p360-member">{html.escape(name or "Selected member")}</p>'
-                f'<p class="p360-member-meta">{html.escape(place or "Location not recorded")} · Born {html.escape(birth)}</p>',
+                f'<p class="p360-side-name">{html.escape(name or "Selected member")}</p>'
+                f'<p class="p360-side-meta">{html.escape(place or "Location not recorded")}'
+                f" · Born {html.escape(birth)}</p>",
                 unsafe_allow_html=True,
             )
-    return selected
+    return view, selected, record, section
 
 
 def data_notice() -> None:
@@ -206,12 +201,16 @@ def ask_page(
     question_box(session, patient_id)
 
 
-def chart_page(session: object | None, selected: dict[str, str | None] | None) -> None:
-    st.markdown('<h1 class="p360-title">Member chart</h1>', unsafe_allow_html=True)
-    if session is None or selected is None:
+def chart_page(
+    session: object | None,
+    selected: dict[str, str | None] | None,
+    record: dict[str, list[dict[str, str | None]]] | None,
+    section: str,
+) -> None:
+    if session is None or selected is None or record is None:
         st.info("The chart opens when the warehouse returns a member.")
         return
-    member_chart.render(selected, load_record(session, str(selected["patient_id"])))
+    member_chart.render(selected, record, section)
 
 
 def cohort_page(session: object | None) -> None:

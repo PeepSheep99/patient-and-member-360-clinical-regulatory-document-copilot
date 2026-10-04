@@ -37,10 +37,47 @@ _CSS = """
   [data-testid="stSidebar"] {
     background: #12312E;
   }
+  [data-testid="stSidebar"] {
+    min-width: 19rem;
+  }
   [data-testid="stSidebar"] p,
   [data-testid="stSidebar"] label,
   [data-testid="stSidebar"] .stCaption {
     color: #E7F1EF;
+  }
+  [data-testid="stSidebar"] [data-testid="stRadio"] label p {
+    font-size: 1.05rem;
+    font-weight: 650;
+    line-height: 1.35;
+  }
+  [data-testid="stSidebar"] [data-testid="stRadio"] label {
+    margin-bottom: 0.35rem;
+  }
+  [data-testid="stSidebar"] .p360-side-name {
+    color: #FFFFFF;
+    font-size: 1.2rem;
+    font-weight: 750;
+    line-height: 1.25;
+    margin: 0.8rem 0 0.15rem;
+  }
+  [data-testid="stSidebar"] .p360-side-meta {
+    color: #D5ECE8;
+    font-size: 0.92rem;
+    margin: 0.1rem 0;
+  }
+  [data-testid="stSidebar"] .p360-side-alert {
+    color: #F6D9D2;
+    font-size: 0.92rem;
+    font-weight: 650;
+    margin: 0.45rem 0 0.1rem;
+  }
+  [data-testid="stSidebar"] .p360-side-kicker {
+    color: #8FBFB8;
+    font-size: 0.75rem;
+    font-weight: 750;
+    letter-spacing: 0.08em;
+    margin: 1rem 0 0.35rem;
+    text-transform: uppercase;
   }
   .p360-brand {
     font-size: 1.15rem;
