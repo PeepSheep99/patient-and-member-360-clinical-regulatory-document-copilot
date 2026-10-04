@@ -12,6 +12,7 @@ entities:
     artifacts:
       - streamlit/patient_360.py
       - streamlit/chrome.py
+      - streamlit/member_chart.py
       - streamlit/assets/patient360-mark.jpg
       - streamlit/pyproject.toml
       - streamlit/.streamlit/config.toml

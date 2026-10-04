@@ -28,6 +28,7 @@ for _candidate in _CANDIDATES:
         sys.path.insert(0, str(_candidate))
 
 try:
+    import member_chart
     from chrome import answer_card, ask_heading, inject, mark
     from app.assemble import assemble_answer, resolve_patient_id
     from app.banner import BANNER, POINT_RULES
@@ -45,7 +46,6 @@ try:
         allergy_section_query,
         antihistamine_query,
         care_plan_evidence_query,
-        chart_queries,
         claim_evidence_query,
         condition_evidence_query,
         coverage_evidence_query,
@@ -54,6 +54,7 @@ try:
         lab_evidence_query,
         medication_evidence_query,
         medication_section_query,
+        member_record_queries,
         member_summary_query,
         patient_list_query,
         patient_name_query,
@@ -113,20 +114,6 @@ _PATIENT_EVIDENCE: tuple[tuple[str, Callable[[str], QuerySpec]], ...] = (
     ("claim_evidence", claim_evidence_query),
     ("coverage_evidence", coverage_evidence_query),
 )
-
-_CHART_TITLES = {
-    "encounter_counts": "Encounters by class",
-    "encounters": "Latest encounters",
-    "conditions": "Conditions",
-    "medications": "Medications",
-    "lab_count": "Laboratory count",
-    "labs": "Latest laboratory results",
-    "claim_count": "Claim count",
-    "claim_line_count": "Claim line count",
-    "claim_on_encounter": "One claim joined to its encounter",
-    "coverage": "Coverage spans",
-}
-
 
 def main() -> None:
     st.set_page_config(page_title="Patient 360", layout="wide")
@@ -224,12 +211,7 @@ def chart_page(session: object | None, selected: dict[str, str | None] | None) -
     if session is None or selected is None:
         st.info("The chart opens when the warehouse returns a member.")
         return
-    patient_id = str(selected["patient_id"])
-    profile(selected)
-    panels = load_chart(session, patient_id)
-    member_counts(panels)
-    join_line(panels.get("claim_on_encounter", []))
-    source_rows(panels)
+    member_chart.render(selected, load_record(session, str(selected["patient_id"])))
 
 
 def cohort_page(session: object | None) -> None:
@@ -392,83 +374,23 @@ def _yes(value: str | None) -> str:
     return "Yes" if float(value) == 1 else "No"
 
 
-def profile(patient: dict[str, str | None]) -> None:
-    columns = st.columns(4)
-    fields = (
-        ("Name", f"{patient.get('first_name') or ''} {patient.get('last_name') or ''}".strip()),
-        ("Gender", patient.get("gender") or ""),
-        ("Birth", patient.get("birthdate") or ""),
-        ("Death", patient.get("deathdate") or "none"),
-        ("City", patient.get("city") or ""),
-        ("State", patient.get("state") or ""),
-    )
-    for index, (label, value) in enumerate(fields):
-        columns[index % 4].metric(label, value or "blank")
-    st.caption("Identifiers such as tax, license, and passport numbers are not shown.")
-
-
-def load_chart(session: object, patient_id: str) -> dict[str, list[dict[str, str | None]]]:
-    panels: dict[str, list[dict[str, str | None]]] = {}
-    for spec in chart_queries(patient_id):
-        try:
-            panels[spec.name] = fetch(session, spec)
-        except QueryFailure as exc:
-            show_query_error(exc)
-            panels[spec.name] = []
-    return panels
-
-
-def member_counts(panels: dict[str, list[dict[str, str | None]]]) -> None:
-    encounter_total = sum(
-        int(float(row["encounter_count"]))
-        for row in panels.get("encounter_counts", [])
-        if row.get("encounter_count")
-    )
-    lab_rows = panels.get("lab_count", [])
-    claim_rows = panels.get("claim_count", [])
-    columns = st.columns(6)
-    metrics = (
-        ("Encounters", str(encounter_total)),
-        ("Conditions", str(len(panels.get("conditions", [])))),
-        ("Medications", str(len(panels.get("medications", [])))),
-        ("Labs", _whole(lab_rows[0].get("lab_count") if lab_rows else None)),
-        ("Claims", _whole(claim_rows[0].get("claim_count") if claim_rows else None)),
-        ("Coverage spans", str(len(panels.get("coverage", [])))),
-    )
-    for column, (label, value) in zip(columns, metrics, strict=True):
-        column.metric(label, value)
-    classes = [
-        f"{row.get('encounter_class') or 'blank'} {_whole(row.get('encounter_count'))}"
-        for row in panels.get("encounter_counts", [])
-    ]
-    if classes:
-        st.caption("Encounters by class: " + ", ".join(classes) + ".")
-    st.caption("A blank coverage member id stays blank. The patient id is the member key.")
-
-
-def join_line(rows: list[dict[str, str | None]]) -> None:
-    if not rows:
-        st.info("No claim on this member has an appointment id that matches an encounter.")
-        return
-    row = rows[0]
-    st.info(
-        f"Claim {row.get('claim_id') or ''}: appointment id "
-        f"{row.get('appointment_id') or ''} is encounter {row.get('encounter_id') or ''}."
-    )
-
-
-def source_rows(panels: dict[str, list[dict[str, str | None]]]) -> None:
-    with st.expander("Source rows for this member"):
-        st.caption(
-            "The counts above come from these queries. "
-            "Encounter lines are the latest 15. Laboratory lines are the latest 25. "
-            "An empty stop, member id, or encounter id stays empty."
-        )
-        for name, rows in panels.items():
-            st.markdown(f"**{_CHART_TITLES.get(name, name)}**")
-            if name == "coverage":
-                st.caption("Member id is shown as stored.")
-            show_table(rows)
+def load_record(session: object, patient_id: str) -> dict[str, list[dict[str, str | None]]]:
+    cached = st.session_state.setdefault("record_cache", {})
+    if patient_id in cached:
+        return cached[patient_id]
+    record: dict[str, list[dict[str, str | None]]] = {}
+    failed = False
+    with st.spinner("Opening the chart"):
+        for spec in member_record_queries(patient_id):
+            try:
+                record[spec.name] = fetch(session, spec)
+            except QueryFailure as exc:
+                show_query_error(exc)
+                record[spec.name] = []
+                failed = True
+    if not failed:
+        cached[patient_id] = record
+    return record
 
 
 _PROMPT_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
@@ -669,12 +591,6 @@ def fetch(session: object, spec: QuerySpec) -> list[dict[str, str | None]]:
 
 def show_answer(answer: Answer, rows: list[dict[str, object]] | None = None) -> None:
     answer_card(answer)
-    if answer.rejected_codes:
-        st.warning(
-            "The chart code is quoted. A different code in the same document is not quoted. "
-            f"Quoted: {', '.join(answer.quoted_codes)}. "
-            f"Not quoted: {', '.join(answer.rejected_codes)}."
-        )
     if rows:
         with st.expander("Citation details"):
             show_table(rows)

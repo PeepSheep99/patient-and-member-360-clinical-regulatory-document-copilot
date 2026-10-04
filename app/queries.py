@@ -601,6 +601,171 @@ def chart_queries(patient_id: str) -> tuple[QuerySpec, ...]:
     )
 
 
+def member_record_queries(patient_id: str) -> tuple[QuerySpec, ...]:
+    """The full chart for one member, in the order a clinician reads it."""
+    allergy = _qualified("ALLERGY")
+    condition = _qualified("CONDITION")
+    medication = _qualified("MEDICATION")
+    observation = _qualified("OBSERVATION")
+    immunization = _qualified("IMMUNIZATION")
+    careplan = _qualified("CAREPLAN")
+    procedure = _qualified("PROCEDURE")
+    encounter = _qualified("ENCOUNTER")
+    organization = _qualified("ORGANIZATION")
+    provider = _qualified("PROVIDER")
+    device = _qualified("DEVICE")
+    imaging = _qualified("IMAGING_STUDY")
+    claim = _qualified("CLAIM")
+    coverage = _qualified("MEMBER_COVERAGE")
+    params = (patient_id,)
+    return (
+        QuerySpec(
+            name="record_allergies",
+            sql=f"""
+SELECT START_DATE, STOP_DATE, CODE, DESCRIPTION, ALLERGY_TYPE, CATEGORY,
+       REACTION_1_DESCRIPTION, REACTION_1_SEVERITY,
+       REACTION_2_DESCRIPTION, REACTION_2_SEVERITY
+FROM {allergy}
+WHERE PATIENT_ID = ?
+ORDER BY START_DATE DESC, CODE
+""".strip(),
+            params=params,
+        ),
+        QuerySpec(
+            name="record_problems",
+            sql=f"""
+SELECT START_DATE, STOP_DATE, CODE, DESCRIPTION
+FROM {condition}
+WHERE PATIENT_ID = ?
+ORDER BY IFF(STOP_DATE IS NULL, 0, 1), START_DATE DESC, CODE
+""".strip(),
+            params=params,
+        ),
+        QuerySpec(
+            name="record_medications",
+            sql=f"""
+SELECT START_TS, STOP_TS, CODE, DESCRIPTION, DISPENSES, REASON_DESCRIPTION
+FROM {medication}
+WHERE PATIENT_ID = ?
+ORDER BY IFF(STOP_TS IS NULL, 0, 1), START_TS DESC, CODE
+""".strip(),
+            params=params,
+        ),
+        QuerySpec(
+            name="record_observations",
+            sql=f"""
+WITH ranked AS (
+    SELECT
+        CATEGORY,
+        CODE,
+        DESCRIPTION,
+        VALUE_TEXT,
+        UNITS,
+        OBSERVATION_TS,
+        LEAD(VALUE_TEXT) OVER (PARTITION BY CODE ORDER BY OBSERVATION_TS DESC) AS PREVIOUS_VALUE,
+        LEAD(OBSERVATION_TS) OVER (PARTITION BY CODE ORDER BY OBSERVATION_TS DESC) AS PREVIOUS_TS,
+        COUNT(*) OVER (PARTITION BY CODE) AS READINGS,
+        ROW_NUMBER() OVER (PARTITION BY CODE ORDER BY OBSERVATION_TS DESC) AS RN
+    FROM {observation}
+    WHERE PATIENT_ID = ? AND CATEGORY IS NOT NULL
+)
+SELECT CATEGORY, CODE, DESCRIPTION, VALUE_TEXT, UNITS, OBSERVATION_TS,
+       PREVIOUS_VALUE, PREVIOUS_TS, READINGS
+FROM ranked
+WHERE RN = 1
+ORDER BY CATEGORY, DESCRIPTION
+""".strip(),
+            params=params,
+        ),
+        QuerySpec(
+            name="record_immunizations",
+            sql=f"""
+SELECT IMMUNIZATION_TS, CODE, DESCRIPTION
+FROM {immunization}
+WHERE PATIENT_ID = ?
+ORDER BY IMMUNIZATION_TS DESC, CODE
+""".strip(),
+            params=params,
+        ),
+        QuerySpec(
+            name="record_careplans",
+            sql=f"""
+SELECT START_DATE, STOP_DATE, CODE, DESCRIPTION, REASON_DESCRIPTION
+FROM {careplan}
+WHERE PATIENT_ID = ?
+ORDER BY IFF(STOP_DATE IS NULL, 0, 1), START_DATE DESC, CODE
+""".strip(),
+            params=params,
+        ),
+        QuerySpec(
+            name="record_procedures",
+            sql=f"""
+SELECT START_TS, CODE, DESCRIPTION, REASON_DESCRIPTION
+FROM {procedure}
+WHERE PATIENT_ID = ?
+ORDER BY START_TS DESC, CODE
+""".strip(),
+            params=params,
+        ),
+        QuerySpec(
+            name="record_encounters",
+            sql=f"""
+SELECT e.START_TS, e.STOP_TS, e.ENCOUNTER_CLASS, e.DESCRIPTION, e.REASON_DESCRIPTION,
+       o.ORGANIZATION_NAME, p.PROVIDER_NAME, p.SPECIALITY
+FROM {encounter} AS e
+LEFT JOIN {organization} AS o ON o.ORGANIZATION_ID = e.ORGANIZATION_ID
+LEFT JOIN {provider} AS p ON p.PROVIDER_ID = e.PROVIDER_ID
+WHERE e.PATIENT_ID = ?
+ORDER BY e.START_TS DESC
+""".strip(),
+            params=params,
+        ),
+        QuerySpec(
+            name="record_devices",
+            sql=f"""
+SELECT START_TS, STOP_TS, CODE, DESCRIPTION
+FROM {device}
+WHERE PATIENT_ID = ?
+ORDER BY START_TS DESC, CODE
+""".strip(),
+            params=params,
+        ),
+        QuerySpec(
+            name="record_imaging",
+            sql=f"""
+SELECT DISTINCT IMAGING_STUDY_ID, IMAGING_TS, MODALITY_DESCRIPTION, BODY_SITE_DESCRIPTION
+FROM {imaging}
+WHERE PATIENT_ID = ?
+ORDER BY IMAGING_TS DESC
+""".strip(),
+            params=params,
+        ),
+        QuerySpec(
+            name="record_claims",
+            sql=f"""
+SELECT c.SERVICE_TS, c.CLAIM_ID, e.ENCOUNTER_CLASS, e.DESCRIPTION AS ENCOUNTER_DESCRIPTION,
+       e.TOTAL_CLAIM_COST, e.PAYER_COVERAGE
+FROM {claim} AS c
+LEFT JOIN {encounter} AS e
+    ON e.ENCOUNTER_ID = c.APPOINTMENT_ID AND e.PATIENT_ID = c.PATIENT_ID
+WHERE c.PATIENT_ID = ?
+ORDER BY c.SERVICE_TS DESC, c.CLAIM_ID
+""".strip(),
+            params=params,
+        ),
+        QuerySpec(
+            name="record_coverage",
+            sql=f"""
+SELECT START_TS, END_TS, PAYER_NAME, PLAN_OWNERSHIP, MEMBER_ID
+FROM {coverage}
+WHERE PATIENT_ID = ?
+ORDER BY START_TS DESC
+""".strip(),
+            params=params,
+        ),
+    )
+
+
 def all_statement_sql() -> tuple[str, ...]:
     """Every statement template, for the identifier and injection checks."""
     sample = "00000000-0000-0000-0000-000000000000"
@@ -608,6 +773,7 @@ def all_statement_sql() -> tuple[str, ...]:
         patient_list_query(),
         patient_name_query("First1", "Last1"),
         *chart_queries(sample),
+        *member_record_queries(sample),
         antihistamine_query(sample),
         medication_section_query(sample, "1", "desc"),
         allergy_query(sample),
