@@ -111,7 +111,7 @@ def _side_identity(selected: Row, record: Record) -> None:
         f'<p class="p360-side-meta">{html.escape(meta)}</p>'
         f"{allergy}"
         f'<p class="p360-side-meta">{_count(active_problems, "active problem")}'
-        f" · {_count(active_meds, "active medication")}</p>",
+        f' · {_count(active_meds, "active medication")}</p>',
         unsafe_allow_html=True,
     )
 
