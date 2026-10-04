@@ -13,6 +13,7 @@ from chrome import _pretty_when, _split_tag
 
 Row = dict[str, str | None]
 Record = dict[str, list[Row]]
+_NO_ALLERGY_ROWS = "No allergy rows are recorded in this dataset"
 
 _VITAL_ORDER = (
     "8480-6",
@@ -103,7 +104,7 @@ def _side_identity(selected: Row, record: Record) -> None:
             names = f"{names}, and {extra} more"
         allergy = f'<p class="p360-side-alert">Allergies · {html.escape(names)}</p>'
     else:
-        allergy = '<p class="p360-side-meta">No allergy recorded</p>'
+        allergy = f'<p class="p360-side-meta">{html.escape(_NO_ALLERGY_ROWS)}</p>'
     active_problems = sum(1 for row in record.get("record_problems", []) if not row.get("stop_date"))
     active_meds = sum(1 for row in record.get("record_medications", []) if not row.get("stop_ts"))
     st.markdown(
@@ -137,7 +138,7 @@ def _banner(selected: Row, record: Record) -> None:
         names = ", ".join(_split_tag(row.get("description") or "")[0] for row in allergies)
         allergy_chip = f'<span class="p360-chip alert">Allergies · {html.escape(names)}</span>'
     else:
-        allergy_chip = '<span class="p360-chip">No allergy recorded</span>'
+        allergy_chip = f'<span class="p360-chip">{html.escape(_NO_ALLERGY_ROWS)}</span>'
     active_problems = [r for r in record.get("record_problems", []) if not r.get("stop_date")]
     active_meds = [r for r in record.get("record_medications", []) if not r.get("stop_ts")]
     chips = [
@@ -182,7 +183,7 @@ def _summary(record: Record) -> None:
                 )
                 for row in record.get("record_allergies", [])
             ],
-            "No allergy is recorded on this chart.",
+            f"{_NO_ALLERGY_ROWS}.",
         )
         _card(
             "Active problems",

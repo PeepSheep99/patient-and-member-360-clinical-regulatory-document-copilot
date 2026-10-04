@@ -214,10 +214,11 @@ def chart_page(
 
 
 def cohort_page(session: object | None) -> None:
-    st.markdown('<h1 class="p360-title">Explainable risk stratification</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="p360-title">Retrospective risk-signal audit</h1>', unsafe_allow_html=True)
     st.caption(
-        "A warehouse-native, rules-based stratifier. "
-        "It reads the stored point count. It is not a validated clinical prediction."
+        "Secondary evidence only: observed 2023 emergency/inpatient utilization by a frozen "
+        "pre-index point count. This is not a validated classifier, patient probability, "
+        "or care recommendation."
     )
     risk_rows = population(session)
     members: list[dict[str, str | None]] = []
@@ -281,20 +282,35 @@ def cohort_audit(
         "an earlier emergency or inpatient encounter; at least 8 conditions still active; "
         "and a last Hemoglobin A1c before the index of at least 6.5."
     )
-    _risk_groups(members, risk_rows)
+    _risk_scores(risk_rows)
     if risk_rows:
         ranked = sorted(risk_rows, key=lambda row: int(float(row.get("score") or 0)))
         try:
             st.bar_chart(
                 {
-                    "Score": [str(row.get("score")) for row in ranked],
+                    "Score": [str(int(float(row.get("score") or 0))) for row in ranked],
                     "Members": [int(float(row.get("patient_count") or 0)) for row in ranked],
                 },
                 x="Score",
                 y="Members",
             )
+            rated = [row for row in ranked if row.get("event_rate") not in (None, "")]
+            if rated:
+                st.bar_chart(
+                    {
+                        "Score": [str(int(float(row.get("score") or 0))) for row in rated],
+                        "Observed event rate": [
+                            round(float(row.get("event_rate") or 0) * 100, 2) for row in rated
+                        ],
+                    },
+                    x="Score",
+                    y="Observed event rate",
+                )
         except Exception:
             pass
+        warnings = _risk_audit_warnings(risk_rows)
+        if warnings:
+            st.warning(" ".join(warnings))
     _risk_tables(members)
     if risk_rows:
         with st.expander("How the four points are counted"):
@@ -305,48 +321,72 @@ def cohort_audit(
         )
 
 
-def _risk_groups(
-    members: list[dict[str, str | None]],
-    risk_rows: list[dict[str, str | None]],
-) -> None:
-    bands = (
-        ("Low", "Score 0", lambda score: score == 0),
-        ("Moderate", "Score 1", lambda score: score == 1),
-        ("Elevated", "Score 2 or higher", lambda score: score >= 2),
-    )
-    columns = st.columns(3)
-    if members:
-        for column, (name, detail, match) in zip(columns, bands, strict=True):
-            chosen = [row for row in members if match(int(float(row.get("point_total") or 0)))]
-            events = sum(int(float(row.get("event_flag") or 0)) for row in chosen)
-            rate = "not recorded" if not chosen else f"{events / len(chosen) * 100:.2f}%"
-            column.metric(f"{name} · {detail}", f"{len(chosen)} members")
-            column.caption(f"Observed acute-event rate {rate}")
-        return
+def _risk_scores(risk_rows: list[dict[str, str | None]]) -> None:
     if not risk_rows:
         return
-    grouped = {"Low": [], "Moderate": [], "Elevated": []}
+    first = risk_rows[0]
+    summary = st.columns(3)
+    summary[0].metric("Cohort", _whole(first.get("cohort_n")))
+    summary[1].metric("Events", _whole(first.get("event_n")))
+    summary[2].metric("Base rate", _rate_text(first.get("base_rate")))
+    by_score = _rows_by_score(risk_rows)
+    columns = st.columns(5)
+    for score, column in zip(range(5), columns, strict=True):
+        row = by_score.get(score)
+        count = "0" if row is None else _whole(row.get("patient_count"))
+        events = "0" if row is None else _whole(row.get("bucket_event_count"))
+        column.metric(f"Score {score}", f"{count} members")
+        column.caption(f"Events {events}. Observed rate {_rate_text(None if row is None else row.get('event_rate'))}")
+
+
+def _risk_audit_warnings(risk_rows: list[dict[str, str | None]]) -> list[str]:
+    by_score = _rows_by_score(risk_rows)
+    warnings: list[str] = []
+    rate_1 = by_score.get(1, {}).get("event_rate")
+    rate_2 = by_score.get(2, {}).get("event_rate")
+    if rate_1 not in (None, "") and rate_2 not in (None, "") and float(rate_2) < float(rate_1):
+        warnings.append("Score 2 is below score 1, so the buckets are not monotonic.")
+    score_3_count = by_score.get(3, {}).get("patient_count")
+    if score_3_count not in (None, "") and 0 < int(float(score_3_count)) < 10:
+        warnings.append(f"Score 3 contains only {_whole(score_3_count)} members.")
+    score_4_count = by_score.get(4, {}).get("patient_count")
+    if score_4_count is not None and int(float(score_4_count or 0)) == 0:
+        warnings.append("Score 4 is empty.")
+    return warnings
+
+
+def _rows_by_score(
+    risk_rows: list[dict[str, str | None]],
+) -> dict[int, dict[str, str | None]]:
+    found: dict[int, dict[str, str | None]] = {}
     for row in risk_rows:
-        score = int(float(row.get("score") or 0))
-        grouped["Low" if score == 0 else "Moderate" if score == 1 else "Elevated"].append(row)
-    for column, (name, detail, _match) in zip(columns, bands, strict=True):
-        count = sum(int(float(row.get("patient_count") or 0)) for row in grouped[name])
-        column.metric(f"{name} · {detail}", f"{count} members")
+        raw = row.get("score")
+        if raw in (None, ""):
+            continue
+        found[int(float(raw))] = row
+    return found
+
+
+def _rate_text(value: str | None) -> str:
+    if value in (None, ""):
+        return "not recorded"
+    return f"{float(value) * 100:.2f}%"
 
 
 def _risk_tables(members: list[dict[str, str | None]]) -> None:
     if not members:
         return
-    st.markdown("**Who is in each group, and which indicators put them there**")
-    for name, match in (
-        ("Low · score 0", lambda score: score == 0),
-        ("Moderate · score 1", lambda score: score == 1),
-        ("Elevated · score 2 or higher", lambda score: score >= 2),
-    ):
-        chosen = [row for row in members if match(int(float(row.get("point_total") or 0)))]
-        st.markdown(f"**{name}**")
+    st.markdown("**Who is at each score, and which indicators put them there**")
+    for score in range(5):
+        chosen = [
+            row
+            for row in members
+            if row.get("point_total") not in (None, "")
+            and int(float(row.get("point_total") or 0)) == score
+        ]
+        st.markdown(f"**Score {score}**")
         if not chosen:
-            st.caption("No members in this group.")
+            st.caption("No members at this score.")
             continue
         show_table([_risk_display_row(row) for row in chosen])
 

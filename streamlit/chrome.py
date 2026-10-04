@@ -822,19 +822,10 @@ def _evidence_check(answer: Answer) -> str | None:
             section, _old = documents[-1]
             documents[-1] = (section, texts[0])
     lead = _sentences(before[0])
-    guards = [s for s in leftovers if s.startswith("Not the quoted allergy")]
+    guards = [s for s in [*lead, *leftovers] if s.startswith("Not the quoted allergy")]
     notes = [s for s in leftovers if s not in guards]
     if answer.intent is Intent.ALLERGY_CITATION:
-        matched = re.match(r"^Quoted allergy code (?P<code>\S+), (?P<desc>.+)$", lead[0] if lead else "")
-        if matched is None:
-            return None
-        title, tag = _split_tag(matched.group("desc"))
-        facts = [f"Quoted code {matched.group('code')}"]
-        for sentence in lead[1:]:
-            if sentence.startswith("Start "):
-                facts.append(f"Recorded {_pretty_when(sentence[6:])}")
-        explain = "The quoted code is the code on the chart allergy row."
-        heading = "Allergy on the chart"
+        return _allergy_evidence(answer, [*lead, *leftovers], guards, documents, notes)
     else:
         matched = re.match(r"^(?:(?P<who>.+?): )?(?P<desc>.+?) is on the retrieved medication list$", lead[0] if lead else "")
         if matched is None:
@@ -881,25 +872,121 @@ def _evidence_check(answer: Answer) -> str | None:
     )
 
 
+def _allergy_evidence(
+    answer: Answer,
+    sentences: list[str],
+    guards: list[str],
+    documents: list[tuple[str, str]],
+    notes: list[str],
+) -> str | None:
+    """Render every quoted allergy row, or the dataset-scoped empty result."""
+    quoted: list[dict[str, str]] = []
+    for sentence in sentences:
+        matched = re.match(r"^Quoted allergy code (?P<code>\S+), (?P<desc>.+)$", sentence)
+        if matched:
+            quoted.append({"code": matched.group("code"), "desc": matched.group("desc"), "when": ""})
+        elif quoted and sentence.startswith("Start ") and not quoted[-1]["when"]:
+            quoted[-1]["when"] = sentence[6:]
+    if not quoted:
+        if "No allergy rows are recorded in this dataset" not in answer.text:
+            return None
+        return (
+            '<p class="p360-tag">Allergy on the chart</p>'
+            '<div class="p360-name big">No allergy rows are recorded in this dataset</div>'
+            '<p class="p360-prose small">This is a dataset result, not a claim that the member has no known allergies.</p>'
+        )
+    rejected = [
+        found.group(1)
+        for guard in guards
+        if (found := re.search(r"retrieved code (\S+) differs", guard)) is not None
+    ]
+    shown_guards = (
+        [
+            f"Not quoted: the same document entry also carries {', '.join(rejected)}. "
+            "Those are different concepts from the chart code, so they are shown here and not cited"
+        ]
+        if rejected
+        else guards
+    )
+    items: list[str] = []
+    for item in quoted:
+        title, tag = _split_tag(item["desc"])
+        tag_html = f' <span class="p360-tag-pill">{html.escape(tag)}</span>' if tag else ""
+        when = f"Recorded {_pretty_when(item['when'])}" if item["when"] else ""
+        facts = " · ".join(part for part in (f"Quoted code {item['code']}", when) if part)
+        items.append(
+            f"<li><div class=\"p360-name\">{html.escape(title)}{tag_html}</div>"
+            f"<div class=\"p360-meta\">{html.escape(facts)}</div></li>"
+        )
+    title = quoted[0]["desc"]
+    doc_html = "".join(
+        f'<div class="p360-doc ok">{html.escape(section)} section'
+        + (f" · “{html.escape(_readable_quote(text, title))}”" if _readable_quote(text, title) else "")
+        + "</div>"
+        for section, text in dict.fromkeys(documents)
+    ) or '<div class="p360-doc">No matching document cell was retrieved, so none is claimed.</div>'
+    guard_html = "".join(f'<div class="p360-guard">{html.escape(g)}.</div>' for g in shown_guards)
+    count = len(quoted)
+    heading = "Allergy on the chart" if count == 1 else f"{count} allergies on the chart"
+    return (
+        f'<p class="p360-tag">{heading}</p>'
+        f'<ol class="p360-list">{"".join(items)}</ol>'
+        '<p class="p360-prose small">The quoted code is the code on the chart allergy row.</p>'
+        '<p class="p360-summary">Where it is written</p>'
+        '<div class="p360-doc ok">Chart · ALLERGY table</div>'
+        f"{doc_html}{guard_html}"
+        + _note_html(
+            [n for n in notes if not n.startswith("The quoted code is the allergies.csv code")]
+        )
+    )
+
+
+_SCORE_LINE = re.compile(r"^Score (?P<s>\d+): (?P<n>\d+) patients(?P<rest>.*)$")
+_SCORE_EVENTS = re.compile(r"events (?P<e>\d+)")
+_SCORE_RATE = re.compile(r"(?:observed )?event rate (?P<r>\d+(?:\.\d+)?%)")
+
+
 def _risk_answer(answer: Answer) -> str | None:
     if answer.intent is not Intent.RISK_COHORT:
         return None
     intro: list[str] = []
-    rows: list[tuple[str, str, str]] = []
+    rows: list[tuple[str, str, str, str]] = []
     notes: list[str] = []
-    for sentence in _sentences(answer.text):
-        found = re.match(r"^Score (?P<s>\d+): (?P<n>\d+) patients(?:, event rate (?P<r>[\d.]+%))?", sentence)
-        if found:
-            rows.append((f"Score {found.group('s')}", found.group("n"), found.group("r") or "no rate"))
-        elif not rows:
-            intro.append(sentence)
-        else:
-            notes.append(sentence)
+    sentences = _sentences(answer.text)
+    index = 0
+    while index < len(sentences):
+        sentence = sentences[index]
+        found = _SCORE_LINE.match(sentence)
+        if found is None:
+            (intro if not rows else notes).append(sentence)
+            index += 1
+            continue
+        rest = found.group("rest")
+        events = _SCORE_EVENTS.search(rest)
+        rate = _SCORE_RATE.search(rest)
+        event_count = events.group("e") if events else ""
+        rate_text = rate.group("r") if rate else ""
+        if not event_count and index + 1 < len(sentences) and sentences[index + 1].startswith("Events "):
+            index += 1
+            events = _SCORE_EVENTS.search(sentences[index])
+            event_count = events.group("e") if events else ""
+        if not rate_text and index + 1 < len(sentences) and "no event rate" in sentences[index + 1]:
+            index += 1
+            rate_text = "not recorded"
+        rows.append(
+            (
+                f"Score {found.group('s')}",
+                found.group("n"),
+                event_count or "not recorded",
+                rate_text or "not recorded",
+            )
+        )
+        index += 1
     if not rows:
         return None
     return (
         "".join(f'<p class="p360-prose">{html.escape(s)}.</p>' for s in intro)
-        + _table_html(("Score", "Members", "Observed event rate"), rows)
+        + _table_html(("Score", "Members", "Events", "Observed event rate"), rows)
         + "".join(f'<p class="p360-note">{html.escape(s)}.</p>' for s in notes)
     )
 
