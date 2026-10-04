@@ -528,6 +528,34 @@ ORDER BY SCORE
     )
 
 
+def risk_member_query() -> QuerySpec:
+    """Read the stored point flags. This statement does not recalculate them."""
+    cohort = _qualified("RISK_COHORT")
+    patient = _qualified("PATIENT")
+    return QuerySpec(
+        name="risk_members",
+        sql=f"""
+SELECT
+    p.FIRST_NAME,
+    p.LAST_NAME,
+    c.POINT_TOTAL,
+    c.AGE_YEARS_AT_INDEX,
+    c.POINT_AGE_GE_65,
+    c.POINT_PRIOR_ACUTE_ENCOUNTER,
+    c.ACTIVE_CONDITION_COUNT,
+    c.POINT_ACTIVE_CONDITIONS_GE_8,
+    c.LAST_A1C_VALUE,
+    c.POINT_LAST_A1C_GE_6_5,
+    c.EVENT_FLAG
+FROM {cohort} AS c
+INNER JOIN {patient} AS p
+    ON p.PATIENT_ID = c.PATIENT_ID
+ORDER BY c.POINT_TOTAL DESC, p.LAST_NAME, p.FIRST_NAME
+""".strip(),
+        params=(),
+    )
+
+
 def population_query() -> QuerySpec:
     """One row of sample size. The page does not recompute risk here."""
     patient = _qualified("PATIENT")
@@ -596,6 +624,7 @@ def all_statement_sql() -> tuple[str, ...]:
         coverage_evidence_query(sample),
         document_section_query(sample, "11450-4"),
         risk_query(),
+        risk_member_query(),
         population_query(),
     ]
     return tuple(spec.sql for spec in specs)

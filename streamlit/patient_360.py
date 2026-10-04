@@ -60,6 +60,7 @@ try:
         population_query,
         procedure_evidence_query,
         recent_encounter_query,
+        risk_member_query,
         risk_query,
     )
     from app.questions import (
@@ -232,13 +233,19 @@ def chart_page(session: object | None, selected: dict[str, str | None] | None) -
 
 
 def cohort_page(session: object | None) -> None:
-    st.markdown('<h1 class="p360-title">Risk stratification</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="p360-title">Explainable risk stratification</h1>', unsafe_allow_html=True)
     st.caption(
-        "A cited point count from CORE.RISK_SCORE. "
-        "This page does not train a model and does not turn the count into a probability."
+        "A warehouse-native, rules-based stratifier. "
+        "It reads the stored point count. It is not a validated clinical prediction."
     )
     risk_rows = population(session)
-    cohort_audit(risk_rows)
+    members: list[dict[str, str | None]] = []
+    if session is not None:
+        try:
+            members = fetch(session, risk_member_query())
+        except QueryFailure as exc:
+            show_query_error(exc)
+    cohort_audit(risk_rows, members)
 
 
 def patient_selector(patients: list[dict[str, str | None]]) -> dict[str, str | None] | None:
@@ -281,40 +288,108 @@ def population(session: object | None) -> list[dict[str, str | None]]:
     return risk_rows
 
 
-def cohort_audit(risk_rows: list[dict[str, str | None]]) -> None:
-    if not risk_rows:
+def cohort_audit(
+    risk_rows: list[dict[str, str | None]],
+    members: list[dict[str, str | None]],
+) -> None:
+    if not risk_rows and not members:
         st.info("The risk count appears when CORE.RISK_SCORE returns rows.")
         return
-    first = risk_rows[0]
-    summary = st.columns(4)
-    summary[0].metric("Cohort", _whole(first.get("cohort_n")))
-    summary[1].metric("Events", _whole(first.get("event_n")))
-    summary[2].metric("Base rate", _percent(first.get("base_rate")))
-    summary[3].metric("Score 2 or higher", _whole(first.get("ge2_patient_count")))
-    ranked = sorted(risk_rows, key=lambda row: int(float(row.get("score") or 0)))
-    columns = st.columns(len(ranked))
-    for column, row in zip(columns, ranked, strict=True):
-        column.metric(f"Score {row.get('score')}", f"{_whole(row.get('patient_count'))} members")
-        column.caption(_percent(row.get("event_rate")))
-    try:
-        st.bar_chart(
-            {
-                "Score": [str(row.get("score")) for row in ranked],
-                "Members": [int(float(row.get("patient_count") or 0)) for row in ranked],
-            },
-            x="Score",
-            y="Members",
-        )
-    except Exception:
-        pass
-    window = f"{first.get('index_date') or 'index'} through {first.get('horizon_end') or 'horizon'}"
-    st.caption(f"Index window {window}. Four recorded points. Not a care recommendation.")
-    with st.expander("How the four points are counted"):
-        st.write(POINT_RULES)
-    show_answer(
-        assemble_answer(RISK_QUESTION, risk_rows=risk_rows, warehouse_connected=True),
-        risk_rows,
+    st.markdown(
+        "Each member receives one point for a recorded indicator: age at 1 Jan 2023 at least 65; "
+        "an earlier emergency or inpatient encounter; at least 8 conditions still active; "
+        "and a last Hemoglobin A1c before the index of at least 6.5."
     )
+    _risk_groups(members, risk_rows)
+    if risk_rows:
+        ranked = sorted(risk_rows, key=lambda row: int(float(row.get("score") or 0)))
+        try:
+            st.bar_chart(
+                {
+                    "Score": [str(row.get("score")) for row in ranked],
+                    "Members": [int(float(row.get("patient_count") or 0)) for row in ranked],
+                },
+                x="Score",
+                y="Members",
+            )
+        except Exception:
+            pass
+    _risk_tables(members)
+    if risk_rows:
+        with st.expander("How the four points are counted"):
+            st.write(POINT_RULES)
+        show_answer(
+            assemble_answer(RISK_QUESTION, risk_rows=risk_rows, warehouse_connected=True),
+            risk_rows,
+        )
+
+
+def _risk_groups(
+    members: list[dict[str, str | None]],
+    risk_rows: list[dict[str, str | None]],
+) -> None:
+    bands = (
+        ("Low", "Score 0", lambda score: score == 0),
+        ("Moderate", "Score 1", lambda score: score == 1),
+        ("Elevated", "Score 2 or higher", lambda score: score >= 2),
+    )
+    columns = st.columns(3)
+    if members:
+        for column, (name, detail, match) in zip(columns, bands, strict=True):
+            chosen = [row for row in members if match(int(float(row.get("point_total") or 0)))]
+            events = sum(int(float(row.get("event_flag") or 0)) for row in chosen)
+            rate = "not recorded" if not chosen else f"{events / len(chosen) * 100:.2f}%"
+            column.metric(f"{name} · {detail}", f"{len(chosen)} members")
+            column.caption(f"Observed acute-event rate {rate}")
+        return
+    if not risk_rows:
+        return
+    grouped = {"Low": [], "Moderate": [], "Elevated": []}
+    for row in risk_rows:
+        score = int(float(row.get("score") or 0))
+        grouped["Low" if score == 0 else "Moderate" if score == 1 else "Elevated"].append(row)
+    for column, (name, detail, _match) in zip(columns, bands, strict=True):
+        count = sum(int(float(row.get("patient_count") or 0)) for row in grouped[name])
+        column.metric(f"{name} · {detail}", f"{count} members")
+
+
+def _risk_tables(members: list[dict[str, str | None]]) -> None:
+    if not members:
+        return
+    st.markdown("**Who is in each group, and which indicators put them there**")
+    for name, match in (
+        ("Low · score 0", lambda score: score == 0),
+        ("Moderate · score 1", lambda score: score == 1),
+        ("Elevated · score 2 or higher", lambda score: score >= 2),
+    ):
+        chosen = [row for row in members if match(int(float(row.get("point_total") or 0)))]
+        st.markdown(f"**{name}**")
+        if not chosen:
+            st.caption("No members in this group.")
+            continue
+        show_table([_risk_display_row(row) for row in chosen])
+
+
+def _risk_display_row(row: dict[str, str | None]) -> dict[str, str]:
+    a1c = row.get("last_a1c_value")
+    return {
+        "Member": f"{row.get('first_name') or ''} {row.get('last_name') or ''}".strip(),
+        "Score": _whole(row.get("point_total")),
+        "Age at index": _whole(row.get("age_years_at_index")),
+        "Age 65 or older": _yes(row.get("point_age_ge_65")),
+        "Prior emergency or inpatient": _yes(row.get("point_prior_acute_encounter")),
+        "Active conditions": _whole(row.get("active_condition_count")),
+        "8 or more conditions": _yes(row.get("point_active_conditions_ge_8")),
+        "Last A1c": a1c if a1c else "not recorded",
+        "A1c at least 6.5": _yes(row.get("point_last_a1c_ge_6_5")),
+        "Acute event in 2023": _yes(row.get("event_flag")),
+    }
+
+
+def _yes(value: str | None) -> str:
+    if value is None or value == "":
+        return "No"
+    return "Yes" if float(value) == 1 else "No"
 
 
 def profile(patient: dict[str, str | None]) -> None:

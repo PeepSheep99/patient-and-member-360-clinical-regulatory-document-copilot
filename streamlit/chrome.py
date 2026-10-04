@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 import re
+from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
@@ -150,6 +151,25 @@ _CSS = """
     color: #526864;
     font-size: 0.95rem;
     margin: 0;
+  }
+  .p360-prose {
+    color: #1B2A28;
+    font-size: 1.05rem;
+    line-height: 1.55;
+    margin: 0 0 0.75rem;
+  }
+  .p360-timeline {
+    margin: 0 0 0.4rem;
+    padding-left: 1.15rem;
+  }
+  .p360-timeline li {
+    color: #1B2A28;
+    line-height: 1.45;
+    margin: 0.38rem 0;
+  }
+  .p360-when {
+    color: #0E7C73;
+    font-weight: 700;
   }
   .p360-chips {
     display: flex;
@@ -305,9 +325,84 @@ def _finish(parts: list[str]) -> str:
     return text
 
 
+def _pretty_when(value: str) -> str:
+    text = value.replace("T", " ").replace("Z", "").strip()
+    parsed = None
+    for fmt, size in (("%Y-%m-%d %H:%M:%S", 19), ("%Y-%m-%d", 10)):
+        try:
+            parsed = datetime.strptime(text[:size], fmt)
+            break
+        except ValueError:
+            continue
+    if parsed is None:
+        return value
+    clock = parsed.strftime("%H:%M")
+    date = f"{parsed.day} {parsed.strftime('%b %Y')}"
+    if clock == "00:00" and len(text) <= 10:
+        return date
+    return f"{date}, {clock}"
+
+
+def _member_narrative(answer: Answer) -> str | None:
+    if not answer.citations or not isinstance(answer.citations[0], PatientCitation):
+        return None
+    if any(not isinstance(citation, EncounterCitation) for citation in answer.citations[1:]):
+        return None
+    remaining = answer.text.strip()
+    pieces: list[str] = []
+    for citation in answer.citations:
+        token = format_citation(citation)
+        before, found, remaining = remaining.partition(token)
+        if not found:
+            return None
+        sentences = _sentences(before)
+        pieces.append(sentences[-1] if sentences else "")
+    identity = re.match(
+        r"^(?P<name>.+?): gender (?P<gender>.+?), birth (?P<birth>.+?), "
+        r"city/state (?P<city>.+?)/(?P<state>.+)$",
+        pieces[0],
+    )
+    if identity is None:
+        return None
+    gender = {"f": "female", "m": "male"}.get(identity.group("gender").strip().lower(), identity.group("gender"))
+    intro = (
+        f"<p class=\"p360-prose\"><b>{html.escape(identity.group('name'))}</b> is recorded as "
+        f"{html.escape(gender)}, born {_pretty_when(identity.group('birth'))}, in "
+        f"{html.escape(identity.group('city'))}, {html.escape(identity.group('state'))}.</p>"
+    )
+    items: list[str] = []
+    for prose in pieces[1:]:
+        matched = re.match(r"^Encounter (?P<kind>\S+) on (?P<rest>.+)$", prose)
+        if matched is None or ": " not in matched.group("rest"):
+            return None
+        when, what = matched.group("rest").split(": ", 1)
+        kind = matched.group("kind").strip().capitalize()
+        what = re.sub(r"\s*\(procedure\)\s*$", "", what.strip(), flags=re.IGNORECASE)
+        items.append(
+            "<li><span class=\"p360-when\">"
+            f"{html.escape(_pretty_when(when))}</span> · {html.escape(kind)} · {html.escape(what)}</li>"
+        )
+    encounters = (
+        "<p class=\"p360-prose\">Recent encounters on the chart:</p>"
+        f"<ul class=\"p360-timeline\">{''.join(items)}</ul>"
+        if items
+        else "<p class=\"p360-prose\">No recent encounters were retrieved.</p>"
+    )
+    note = _finish(_sentences(remaining))
+    note_html = f"<p class=\"p360-note\">{html.escape(note)}</p>" if note else ""
+    return intro + encounters + note_html
+
+
 def answer_card(answer: Answer) -> None:
     kind = "cited" if answer.status is AnswerStatus.CITED else "refused"
     label = "Cited answer" if kind == "cited" else "Refused"
+    narrative = _member_narrative(answer) if kind == "cited" else None
+    if narrative is not None:
+        st.markdown(
+            f'<div class="p360-answer {kind}"><div class="p360-kicker">{label}</div>{narrative}</div>',
+            unsafe_allow_html=True,
+        )
+        return
     layout = _layout(answer) if answer.citations else None
     if layout is None:
         sentences = "".join(f"<p>{html.escape(part)}</p>" for part in _sentences(answer.text))
