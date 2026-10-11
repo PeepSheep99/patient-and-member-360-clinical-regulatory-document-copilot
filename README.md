@@ -196,6 +196,54 @@ Question 2 follows the selected member. For Mosciski it quotes code `609328004`,
 
 Question 3, when `RISK_SCORE` matches the frozen measurement: cohort 97, events 14, base rate 14.43%, scores 0/1/2/3/4 = 19/37/35/6/0 patients, events = 1/6/5/2/0, and observed rates = 5.26%, 16.22%, 14.29%, 33.33%, and no rate on the zero-patient score. The screen explicitly says score 2 sits below score 1, score 3 has only six members, score 4 is empty, and the buckets do not establish monotonic stratification.
 
+## Validation evidence from the deployed app
+
+Screenshots from the running `PATIENT_360.CORE.PATIENT_360_APP` in Snowflake, signed in as a
+scoped team member, for the synthetic member Alexandra16 Mosciski958. All data is synthetic
+Synthea. Numbers on the Risk page match the frozen audit above (108 members, 5,571
+encounters, 9,421 claims on an encounter, cohort 97, 14 events, base rate 14.43%).
+
+### A cited answer
+
+Each retrieved medication states where it is also written in the clinical document.
+
+![Cited medications](docs/validation/01-cited-medications.jpg)
+
+### The allergy guard
+
+The quoted code is the code on the chart allergy row. A second code carried by the same
+document entry is shown as "not quoted" and is not cited.
+
+![Allergy guard](docs/validation/02-allergy-guard.jpg)
+
+### Refusals
+
+| Question | Screenshot |
+| --- | --- |
+| "Change the fexofenadine dose." | ![Dose change refused](docs/validation/03-refusal-dose-change.jpg) |
+| "Quote the 2019 discharge summary." | ![Discharge note refused](docs/validation/04-refusal-discharge-note.jpg) |
+| "What should we do about this patient?" | ![Treatment advice refused](docs/validation/05-refusal-treatment-advice.jpg) |
+
+Each refusal ends with "No rows were cited, so nothing was answered."
+
+### Member chart and risk audit
+
+![Member chart](docs/validation/06-member-chart.jpg)
+
+The risk page states that the point count is not a validated classifier, a patient
+probability, or a care recommendation. Score 2 sits below score 1, score 3 has six members, and
+score 4 is empty, and the page shows "observed rate not recorded" instead of 0%.
+
+![Risk audit](docs/validation/07-risk-audit.jpg)
+
+### Allergy rows per member
+
+From `tests/allergy_cohort.sql`: 87 members have zero allergy rows, 5 have one, and 16 have
+more than one. The page therefore says "no allergy rows are recorded in this dataset" and never
+"no known allergies".
+
+![Allergy rows per member](docs/validation/08-allergy-rows-by-member.png)
+
 ## Sources
 
 Synthea sample CSV and C-CDA from MITRE SyntheticMass, paired export, local copies under `data/csv/` and `data/ccda/`. MITRE states the synthetic data may be used without restriction for secondary uses. The generator is Apache-2.0. Citation: Jason Walonoski et al., JAMIA 25(3), 2018, 230–238, https://doi.org/10.1093/jamia/ocx079. SNOMED CT, LOINC, and RxNorm keep their own licenses.
