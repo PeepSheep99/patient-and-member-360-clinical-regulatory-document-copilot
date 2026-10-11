@@ -236,6 +236,21 @@ score 4 is empty, and the page shows "observed rate not recorded" instead of 0%.
 
 ![Risk audit](docs/validation/07-risk-audit.jpg)
 
+### How a question becomes an answer or a refusal
+
+![Guardrail flow](docs/validation/11-guardrail-flow.png)
+
+### Documents reconciled to structured rows
+
+Narrative cells parsed from the 108 C-CDA documents and reconciled back to the CSV rows they
+describe (README inspection checks).
+
+![Documents reconciled](docs/validation/10-documents-reconciled.png)
+
+### Observed event rate by score
+
+![Observed event rate by score](docs/validation/09-risk-rate-by-score.png)
+
 ### Allergy rows per member
 
 From `tests/allergy_cohort.sql`: 87 members have zero allergy rows, 5 have one, and 16 have
